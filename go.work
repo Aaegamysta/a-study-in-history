@@ -1,0 +1,8 @@
+go 1.23.0
+
+use (
+	./a-study-in-history-api
+	./a-study-in-history-bot
+	./a-study-in-history-daemon
+	./a-study-in-history-spec
+)
