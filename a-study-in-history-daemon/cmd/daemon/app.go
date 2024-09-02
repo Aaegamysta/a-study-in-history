@@ -26,18 +26,17 @@ func CreateApp(_ context.Context) App {
 	sugaredLogger := logger.Sugar()
 	f, err := os.Open("./configs/daemon.development.yaml")
 	if err != nil {
-		log.Println(os.Getwd())
-		log.Panicf("failed to open config file while creating application %v", err)
+		sugaredLogger.Panicf("failed to open config file while creating application %v", err)
 	}
 	defer f.Close()
 	bytes, err := io.ReadAll(f)
 	if err != nil {
-		log.Panicf("failed to parse config file while creating application %v", err)
+		sugaredLogger.Panicf("failed to parse config file while creating application %v", err)
 	}
 	var cfg = AppConfig{}
 	err = yaml.Unmarshal(bytes, &cfg)
 	if err != nil {
-		log.Panicf("failed to parse config file while creating application %v", err)
+		sugaredLogger.Panicf("failed to parse config file while creating application %v", err)
 	}
 	app := App{
 		logger: sugaredLogger,
