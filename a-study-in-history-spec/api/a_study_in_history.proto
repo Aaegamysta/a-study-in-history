@@ -1,0 +1,68 @@
+syntax = "proto3";
+
+package daemon;
+
+option go_package = "../gen";
+
+import "events.proto";
+
+enum TargetEvents {
+  TARGET_EVENTS_UNSPECIFIED = 0;
+  TARGET_EVENTS_HISTORY = 1;
+  TARGET_EVENTS_BIRTH = 2;
+  TARGET_EVENTS_DEATH = 3;
+  TARGET_EVENTS_HOLIDAY = 4;
+}
+
+
+enum ImportStatus {
+  IMPORT_STATUS_UNSPECIFIED = 0;
+  IMPORT_STATUS_SUCCESS = 1;
+  IMPORT_STATUS_PARTIAL_SUCCESS = 2;
+  IMPORT_STATUS_FAILED = 3;
+}
+
+message MissedEvents {
+  Type type = 1;
+  int64 day = 2;
+  int64 month = 3;
+}
+
+message ImportRequest {
+
+}
+
+message ImportResponse {
+    ImportStatus status = 1;
+    repeated MissedEvents missedEvents = 2;
+    int64 importedOn = 3;
+}
+
+message SynchronizeForRequest {
+    TargetEvents targetEvents = 1;
+    int64 day = 2;
+    int64 month = 3;
+}
+
+message SynchronizeForResponse {
+    bool status = 1;
+}
+
+
+message GetEventsRequest {
+    TargetEvents targetEvents = 1;
+    int64 day = 2;
+    int64 month = 3;
+}
+
+message GetEventsResponse {
+    EventsCollection eventsCollection = 1;
+    int64 day = 2;
+    int64 month = 3;
+}
+service AStudyInHistory {
+
+    rpc Import(ImportRequest) returns (ImportResponse);
+    rpc SynchronizeFor(SynchronizeForRequest) returns (SynchronizeForResponse);
+    rpc GetEventsFor(GetEventsRequest) returns (GetEventsResponse);
+}
