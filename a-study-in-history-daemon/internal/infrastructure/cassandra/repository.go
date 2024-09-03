@@ -67,7 +67,30 @@ func New(ctx context.Context, cfg Config, logger *zap.SugaredLogger) Interface {
 
 // CreateTablesIfNotExists implements Interface.
 func (i *Impl) CreateTablesIfNotExists(ctx context.Context) error {
-	panic("unimplemented")
+	connRes, ok := i.connectionPool.Get().(*connectionResult)
+	if !ok {
+		i.logger.Panicf("unexpected type while retrieving connection from pool")
+	}
+	if connRes.err != nil {
+		return fmt.Errorf("something wrong happened while creating tables %w", connRes.err)
+	}
+	conn := connRes.conn
+	// NewStargateClientWithConn implementation never returns an error
+	cassandraClient, _ := client.NewStargateClientWithConn(conn)
+	cql := fmt.Sprintf(`
+		CREATE TABLE IF NOT EXISTS %s.events_by_type_day_month (
+			type text, day int, month int, year int, id text, title text ,description text, 
+			thumbnail_source text, thumbnail_width int, thumbnail_height int,
+			PRIMARY KEY ((type, day, month), year, id)
+		)
+	`, i.cfg.Keyspace)
+	_, err := cassandraClient.ExecuteQuery(&proto.Query{
+		Cql: cql,
+	})
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 // ListBirthsFor implements Interface.
