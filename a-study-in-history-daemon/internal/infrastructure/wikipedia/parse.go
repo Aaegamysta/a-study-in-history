@@ -45,7 +45,7 @@ func (i *Impl) parseEvents(_ context.Context, coll *events.EventsCollection, r i
 			Day: coll.Day,
 			Month: coll.Month,
 			Year: year,
-			ID: "",
+			ID: events.GenerateEventID(coll.Type, coll.Month, coll.Month, year, title),
 			Title: title,
 			Description: firstPage.description,
 			Thumbnail: events.Thumbnail{

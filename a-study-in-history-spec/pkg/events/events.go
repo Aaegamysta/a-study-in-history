@@ -1,6 +1,12 @@
 package events
 
-import "github.com/aaegamysta/a-study-in-history/spec/gen"
+import (
+	"crypto/md5"
+	"encoding/hex"
+	"strconv"
+
+	"github.com/aaegamysta/a-study-in-history/spec/gen"
+)
 
 type Type int64
 
@@ -97,4 +103,16 @@ func MapEventsCollectionToGRPC(coll EventsCollection) *gen.EventsCollection {
 		grpcColl.Events = append(grpcColl.Events, mapEventToGRPC(e))
 	}
 	return &grpcColl
+}
+
+func GenerateEventID(typing Type, month, day, year int64, title string) string {
+	h := md5.New()
+	h.Write([]byte(typing.String()))
+	h.Write([]byte(strconv.Itoa(int(month))))
+	h.Write([]byte(strconv.Itoa(int(day))))
+	h.Write([]byte(strconv.Itoa(int(year))))
+	h.Write([]byte(title))
+	sum := h.Sum(nil)
+	ID := hex.EncodeToString(sum)
+	return ID
 }
