@@ -15,6 +15,14 @@ import (
 	"google.golang.org/grpc/credentials"
 )
 
+type Operation int64
+
+const (
+	Unspecified Operation = iota
+	Upsert
+	List
+)
+
 type Interface interface {
 	CreateTablesIfNotExists(ctx context.Context) error
 	ListHistoricalEventsFor(ctx context.Context, month, day int64) (events.EventsCollection, error)
@@ -24,15 +32,27 @@ type Interface interface {
 	UpsertEvents(ctxc context.Context, coll events.EventsCollection) error
 }
 
+type Impl struct {
+	cfg            Config
+	logger         *zap.SugaredLogger
+	connectionPool sync.Pool
+}
+
 type connectionResult struct {
 	conn *grpc.ClientConn
 	err  error
 }
 
-type Impl struct {
-	cfg            Config
-	logger         *zap.SugaredLogger
-	connectionPool sync.Pool
+type DatabaseError struct {
+	Operation Operation
+	Type events.Type
+	Month     int64
+	Day       int64
+	Err error
+}
+
+func (d DatabaseError) Error() string {
+	return fmt.Sprintf("failed to %s %s events for %d-%d", d.Operation, d.Type, d.Month, d.Day)
 }
 
 func New(ctx context.Context, cfg Config, logger *zap.SugaredLogger) Interface {
@@ -53,7 +73,7 @@ func New(ctx context.Context, cfg Config, logger *zap.SugaredLogger) Interface {
 			if err != nil {
 				return &connectionResult{
 					conn: nil,
-					err: err,
+					err:  err,
 				}
 			}
 			return &connectionResult{
@@ -115,5 +135,59 @@ func (i *Impl) ListHolidaysFor(ctx context.Context, month int64, day int64) (eve
 
 // UpsertEvents implements Interface.
 func (i *Impl) UpsertEvents(ctxc context.Context, coll events.EventsCollection) error {
-	panic("unimplemented")
+	connRes, ok := i.connectionPool.Get().(*connectionResult)
+	if !ok {
+		i.logger.Panicf("unexpected type while retrieving connection from pool")
+	}
+	if connRes.err != nil {
+		return fmt.Errorf("something wrong happened while retrieving connection from pool for upserting events %w", connRes.err)
+	}
+	conn := connRes.conn
+	// NewStargateClientWithConn implementation never returns an error
+	cassandraClient, _ := client.NewStargateClientWithConn(conn)
+	batchUpsert := i.mapEventsCollectionsToBatchInsert(coll)
+	_, err := cassandraClient.ExecuteBatchWithContext(batchUpsert, ctxc)
+	if err != nil {
+		return DatabaseError{
+			Operation: Upsert,
+			Type: coll.Type,
+			Month:     coll.Month,
+			Day:       coll.Day,
+			Err: err,
+		}
+	}
+	return nil
+}
+
+func (i *Impl) mapEventsCollectionsToBatchInsert(coll events.EventsCollection) *proto.Batch {
+	batchUpsert := &proto.Batch{
+		Type:    proto.Batch_UNLOGGED,
+		Queries: make([]*proto.BatchQuery, len(coll.Events)),
+	}
+	cql := fmt.Sprintf(`
+		INSERT INTO %s.events_by_type_day_month (
+			type, day, month, year, id, title ,description , 
+			thumbnail_source , thumbnail_width , thumbnail_height )
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+	`, i.cfg.Keyspace)
+	for i := 0; i < len(coll.Events); i++ {
+		batchUpsert.Queries[i] = &proto.BatchQuery{
+			Cql: cql,
+			Values: &proto.Values{
+				Values: []*proto.Value{
+					&proto.Value{Inner: &proto.Value_String_{coll.Events[i].Type.String()}},
+					&proto.Value{Inner: &proto.Value_Int{coll.Events[i].Day}},
+					&proto.Value{Inner: &proto.Value_Int{coll.Events[i].Month}},
+					&proto.Value{Inner: &proto.Value_Int{coll.Events[i].Year}},
+					&proto.Value{Inner: &proto.Value_String_{coll.Events[i].ID}},
+					&proto.Value{Inner: &proto.Value_String_{coll.Events[i].Title}},
+					&proto.Value{Inner: &proto.Value_String_{coll.Events[i].Description}},
+					&proto.Value{Inner: &proto.Value_String_{coll.Events[i].Thumbnail.Path}},
+					&proto.Value{Inner: &proto.Value_Int{coll.Events[i].Thumbnail.Width}},
+					&proto.Value{Inner: &proto.Value_Int{coll.Events[i].Thumbnail.Height}},
+				},
+			},
+		}
+	}
+	return batchUpsert
 }
