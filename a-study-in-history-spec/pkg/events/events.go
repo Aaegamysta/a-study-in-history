@@ -29,6 +29,23 @@ func (t Type) String() string {
 	}
 }
 
+func TypeFromString(s string) Type {
+	switch s {
+	case "Unspecified":
+		return Unspecified
+	case "events":
+		return Historical
+	case "births":
+		return Birth
+	case "deaths":
+		return Death
+	case "holidays":
+		return Holiday
+	default:
+		return Unspecified
+	}
+}
+
 type Thumbnail struct {
 	Path   string
 	Width  int64
