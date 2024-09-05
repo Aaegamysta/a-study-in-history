@@ -9,6 +9,7 @@ import (
 	"github.com/aaegamysta/a-study-in-history/daemon/internal/infrastructure/wikipedia"
 	"github.com/aaegamysta/a-study-in-history/spec/pkg/events"
 	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
 )
 
 type (
@@ -89,7 +90,87 @@ func New(ctx context.Context, logger *zap.SugaredLogger, cfg Config,
 	return impl
 }
 
-// Import implements Interface.
+
 func (i *Impl) Import(ctx context.Context) ImportResult {
-	panic("unimplemented")
+	if i.cfg.ImportConcurrently {
+		result := i.importConcurrently(ctx)
+		return result
+	}
+	result := i.importSequentially(ctx)
+	return result
+}
+
+func (i *Impl) importConcurrently(ctx context.Context) ImportResult {
+	eg, ctx := errgroup.WithContext(ctx)
+	var historicalEventsImportResult ImportResult
+	var birthsImportResult ImportResult
+	var deathsImportResult ImportResult
+	var holidaysImportResult ImportResult
+	eg.Go(func() error {
+		historicalEventsImportResult = i.doImport(ctx, events.Historical)
+		return nil
+	})
+	eg.Go(func() error {
+		birthsImportResult = i.doImport(ctx, events.Birth)
+		return nil
+	})
+	eg.Go(func() error {
+		deathsImportResult = i.doImport(ctx, events.Death)
+		return nil
+	})
+	eg.Go(func() error {
+		holidaysImportResult = i.doImport(ctx, events.Holiday)
+		return nil
+	})
+	err := eg.Wait()
+	if err != nil {
+	}
+	aggregatedImportResult := aggregateImportResults(historicalEventsImportResult,
+		birthsImportResult,
+		deathsImportResult,
+		holidaysImportResult,
+	)
+	return aggregatedImportResult
+}
+
+func (i *Impl) importSequentially(ctx context.Context) ImportResult {
+	historicalEventsImportResult := i.doImport(ctx, events.Historical)
+	birthsImportResult := i.doImport(ctx, events.Birth)
+	deathsImportResult := i.doImport(ctx, events.Death)
+	holidaysImportResult := i.doImport(ctx, events.Holiday)
+	aggregatedImportResult := aggregateImportResults(historicalEventsImportResult, birthsImportResult, holidaysImportResult, deathsImportResult)
+	return aggregatedImportResult
+}
+
+func (i *Impl) doImport(ctx context.Context, typing events.Type) ImportResult {
+	panic("implement me")
+}
+
+func aggregateImportResults(historical, birth, death, holiday ImportResult) ImportResult {
+	var aggregatedImportStatus ImportStatus
+	if historical.Status == Failed || birth.Status == Failed || death.Status == Failed || holiday.Status == Failed {
+		aggregatedImportStatus = Failed
+	} else if historical.Status == PartialSuccess || birth.Status == PartialSuccess || death.Status == PartialSuccess || holiday.Status == PartialSuccess {
+		aggregatedImportStatus = PartialSuccess
+	} else {
+		aggregatedImportStatus = Success
+	}
+	aggregatedMissedOutEvents := make([]events.Event, 0)
+	aggregatedMissedOutEvents = append(aggregatedMissedOutEvents,
+		historical.MissedOutEvents...,
+	)
+	aggregatedMissedOutEvents = append(aggregatedMissedOutEvents,
+		birth.MissedOutEvents...,
+	)
+	aggregatedMissedOutEvents = append(aggregatedMissedOutEvents,
+		death.MissedOutEvents...,
+	)
+	aggregatedMissedOutEvents = append(aggregatedMissedOutEvents,
+		holiday.MissedOutEvents...,
+	)
+	return ImportResult{
+		Status:          aggregatedImportStatus,
+		MissedOutEvents: aggregatedMissedOutEvents,
+		ImportedOn:      time.Now(),
+	}
 }
