@@ -70,10 +70,10 @@ type Event struct {
 }
 
 type EventsCollection struct {
-	Type   Type
-	Day    int64
-	Month  int64
-	Events []Event
+	Type       Type
+	Day        int64
+	Month      int64
+	Collection []Event
 }
 
 func mapEventToGRPC(e Event) *gen.Event {
@@ -99,7 +99,7 @@ func MapEventsCollectionToGRPC(coll EventsCollection) *gen.EventsCollection {
 		Day:    coll.Day,
 		Month:  coll.Month,
 	}
-	for _, e := range coll.Events {
+	for _, e := range coll.Collection {
 		grpcColl.Events = append(grpcColl.Events, mapEventToGRPC(e))
 	}
 	return &grpcColl
