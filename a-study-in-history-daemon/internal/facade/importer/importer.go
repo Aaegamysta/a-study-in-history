@@ -9,6 +9,7 @@ import (
 
 	"github.com/aaegamysta/a-study-in-history/daemon/internal/infrastructure/cassandra"
 	"github.com/aaegamysta/a-study-in-history/daemon/internal/infrastructure/wikipedia"
+	"github.com/aaegamysta/a-study-in-history/daemon/pkg/tiime"
 	"github.com/aaegamysta/a-study-in-history/spec/pkg/events"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -144,7 +145,13 @@ func (i *Impl) importSequentially(ctx context.Context) ImportResult {
 }
 
 func (i *Impl) doImport(ctx context.Context, typing events.Type) ImportResult {
-	panic("implement me")
+	eventsFinder := make([]<-chan ImportPipelineStageResult, 365)
+	for dayOfYear := range tiime.DaysInYear {
+		month, day := tiime.DayOfYearToMonthDay(int64(dayOfYear) + 1)
+		eventsFinder[dayOfYear] = i.persistEventsPipelineStage(ctx, i.retrieveEventsPipelineStage(ctx, typing, month, day))
+	}
+	importResult := i.fanInFetchedPersistedEvents(ctx, eventsFinder...)
+	return importResult
 }
 
 func (i *Impl) retrieveEventsPipelineStage(ctx context.Context, typing events.Type, month, day int64) <-chan ImportPipelineStageResult {
