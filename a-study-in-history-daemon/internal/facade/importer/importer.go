@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"sync"
 	"time"
 
 	"github.com/aaegamysta/a-study-in-history/daemon/internal/infrastructure/cassandra"
@@ -218,6 +219,61 @@ func (i *Impl) persistEventsPipelineStage(ctx context.Context, retrievedEventsSt
 		}
 	}()
 	return persistedEventsStream
+}
+
+func (i *Impl) fanInFetchedPersistedEvents(ctx context.Context, eventsStream ...<-chan ImportPipelineStageResult) ImportResult {
+	wg := sync.WaitGroup{}
+	mu := sync.Mutex{}
+	// TODO: see if using atomic counter for totalFetchedEvents would be better instead of having in critical section
+	missedOutEvents := make([]events.Event, 0)
+	totalFetchedEvents := 0
+
+	multiplex := func(ch <-chan ImportPipelineStageResult) {
+		defer wg.Done()
+		select {
+		case <-ctx.Done():
+			return
+		case result := <-ch:
+			mu.Lock()
+			defer mu.Unlock()
+			if result.Error != nil {
+				stageErr := result.Error.(PipelineStageError)
+				missedOutEvents = append(missedOutEvents, events.Event{
+					Type:  stageErr.Type,
+					Day:   stageErr.Day,
+					Month: stageErr.Month,
+				})
+				i.logger.Debugf("an error occurred at stage %s while importing %s events on %d-%d, missed out on %d events", stageErr.Type, stageErr.Type, stageErr.Month, stageErr.Day)
+				return
+			}
+			totalFetchedEvents += len(result.Events.Collection)
+			i.logger.Debugf("retrieved and persisted %s events on %d-%d totalling %d", result.Events.Type, result.Events.Month, result.Events.Day, len(result.Events.Collection))
+		}
+	}
+
+	wg.Add(len(eventsStream))
+	for _, stream := range eventsStream {
+		go multiplex(stream)
+	}
+
+	wg.Wait()
+
+	var importStatus ImportStatus
+	switch {
+	case len(missedOutEvents) == 0:
+		importStatus = Success
+	case len(missedOutEvents) < totalFetchedEvents:
+		importStatus = PartialSuccess
+	case totalFetchedEvents == 0:
+		importStatus = Failed
+	}
+	i.logger.Debugf("fetching, persistence and fanning in of %d events with %d missed out events %s completed", totalFetchedEvents, len(missedOutEvents), importStatus)
+
+	return ImportResult{
+		Status:          importStatus,
+		MissedOutEvents: missedOutEvents,
+		ImportedOn:      time.Now(),
+	}
 }
 
 func aggregateImportResults(historical, birth, death, holiday ImportResult) ImportResult {
