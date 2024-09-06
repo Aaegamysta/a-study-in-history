@@ -3,6 +3,7 @@ package importer
 import (
 	"context"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/aaegamysta/a-study-in-history/daemon/internal/infrastructure/cassandra"
@@ -39,7 +40,7 @@ func (s Stage) String() string {
 	}
 }
 
-// TODO: check if the leaving out of event attributes except day and month will not send it in the repsonse
+// TODO: check if the leaving out of event attributes except day and month will not send it in the response.
 type ImportResult struct {
 	Status          ImportStatus
 	MissedOutEvents []events.Event
@@ -60,7 +61,7 @@ type PipelineStageError struct {
 }
 
 func (e PipelineStageError) Error() string {
-	return fmt.Sprintf("failed to import %s event at %s stage on %d-%d: %s", e.Type, e.Stage ,e.Month, e.Day, e.Err)
+	return fmt.Sprintf("failed to import %s event at %s stage on %d-%d: %s", e.Type, e.Stage, e.Month, e.Day, e.Err)
 }
 
 type Interface interface {
@@ -89,7 +90,6 @@ func New(ctx context.Context, logger *zap.SugaredLogger, cfg Config,
 	}
 	return impl
 }
-
 
 func (i *Impl) Import(ctx context.Context) ImportResult {
 	if i.cfg.ImportConcurrently {
@@ -146,27 +146,61 @@ func (i *Impl) doImport(ctx context.Context, typing events.Type) ImportResult {
 	panic("implement me")
 }
 
+func (i *Impl) retrieveEventsPipelineStage(ctx context.Context, typing events.Type, month, day int64) <-chan ImportPipelineStageResult {
+	retrievedEventsStream := make(chan ImportPipelineStageResult)
+	go func() {
+		defer close(retrievedEventsStream)
+		select {
+		case <-ctx.Done():
+			return
+		default:
+			var coll wikipedia.EventsCollectionResult
+			var err error
+			switch typing {
+			case events.Historical:
+				coll, err = i.wikipediaClient.ImportHistoricalEventsFor(ctx, month, day)
+			case events.Birth:
+				coll, err = i.wikipediaClient.ImportBirthsFor(ctx, month, day)
+			case events.Death:
+				coll, err = i.wikipediaClient.ImportDeathsFor(ctx, month, day)
+			case events.Holiday:
+				coll, err = i.wikipediaClient.ImportHolidaysFor(ctx, month, day)
+			}
+			if err != nil {
+				retrievedEventsStream <- ImportPipelineStageResult{
+					Error: PipelineStageError{
+						Stage: Fetching,
+						Type:  typing,
+						Month: month,
+						Day:   day,
+					},
+				}
+				return
+			}
+			retrievedEventsStream <- ImportPipelineStageResult{
+				Events: coll.Coll,
+				Error:  nil,
+			}
+		}
+	}()
+	return retrievedEventsStream
+}
+
 func aggregateImportResults(historical, birth, death, holiday ImportResult) ImportResult {
 	var aggregatedImportStatus ImportStatus
-	if historical.Status == Failed || birth.Status == Failed || death.Status == Failed || holiday.Status == Failed {
+	switch {
+	case historical.Status == Failed || birth.Status == Failed || death.Status == Failed || holiday.Status == Failed:
 		aggregatedImportStatus = Failed
-	} else if historical.Status == PartialSuccess || birth.Status == PartialSuccess || death.Status == PartialSuccess || holiday.Status == PartialSuccess {
+	case historical.Status == PartialSuccess || birth.Status == PartialSuccess || death.Status == PartialSuccess || holiday.Status == PartialSuccess:
 		aggregatedImportStatus = PartialSuccess
-	} else {
+	default:
 		aggregatedImportStatus = Success
 	}
 	aggregatedMissedOutEvents := make([]events.Event, 0)
-	aggregatedMissedOutEvents = append(aggregatedMissedOutEvents,
-		historical.MissedOutEvents...,
-	)
-	aggregatedMissedOutEvents = append(aggregatedMissedOutEvents,
-		birth.MissedOutEvents...,
-	)
-	aggregatedMissedOutEvents = append(aggregatedMissedOutEvents,
-		death.MissedOutEvents...,
-	)
-	aggregatedMissedOutEvents = append(aggregatedMissedOutEvents,
-		holiday.MissedOutEvents...,
+	slices.Concat(aggregatedMissedOutEvents, historical.MissedOutEvents,
+		birth.MissedOutEvents,
+		death.MissedOutEvents,
+		holiday.MissedOutEvents,
 	)
 	return ImportResult{
 		Status:          aggregatedImportStatus,
