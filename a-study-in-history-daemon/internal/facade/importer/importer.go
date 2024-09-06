@@ -186,6 +186,40 @@ func (i *Impl) retrieveEventsPipelineStage(ctx context.Context, typing events.Ty
 	return retrievedEventsStream
 }
 
+func (i *Impl) persistEventsPipelineStage(ctx context.Context, retrievedEventsStream <-chan ImportPipelineStageResult) <-chan ImportPipelineStageResult {
+	persistedEventsStream := make(chan ImportPipelineStageResult)
+	go func() {
+		defer close(persistedEventsStream)
+		select {
+		case <-ctx.Done():
+			return
+		case eventsColl := <-retrievedEventsStream:
+			if eventsColl.Error != nil {
+				persistedEventsStream <- eventsColl
+			}
+			err := i.cassandraClient.UpsertEvents(ctx, eventsColl.Events)
+			if err != nil {
+				persistedEventsStream <- ImportPipelineStageResult{
+					Events: events.EventsCollection{},
+					Error: PipelineStageError{
+						Stage: Persisting,
+						Type:  eventsColl.Events.Type,
+						Month: eventsColl.Events.Month,
+						Day:   eventsColl.Events.Day,
+						Err:   err,
+					},
+				}
+				return
+			}
+			persistedEventsStream <- ImportPipelineStageResult{
+				Events: eventsColl.Events,
+				Error:  nil,
+			}
+		}
+	}()
+	return persistedEventsStream
+}
+
 func aggregateImportResults(historical, birth, death, holiday ImportResult) ImportResult {
 	var aggregatedImportStatus ImportStatus
 	switch {
