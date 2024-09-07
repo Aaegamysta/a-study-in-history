@@ -235,14 +235,14 @@ func (i *Impl) doList(ctx context.Context, typing events.Type, month, day int64)
 	if err != nil {
 		return events.EventsCollection{}, DatabaseError{
 			Operation: List,
-			Type:      events.Holiday,
+			Type:      typing,
 			Month:     month,
 			Day:       day,
 			Err:       err,
 		}
 	}
 	coll := events.EventsCollection{
-		Type:       events.Holiday,
+		Type:       typing,
 		Day:        day,
 		Month:      month,
 		Collection: make([]events.Event, 0),

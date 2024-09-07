@@ -12,6 +12,7 @@ enum TargetEvents {
   TARGET_EVENTS_BIRTH = 2;
   TARGET_EVENTS_DEATH = 3;
   TARGET_EVENTS_HOLIDAY = 4;
+  TARGET_EVENTS_ALL = 5;
 }
 
 
@@ -38,13 +39,13 @@ message ImportResponse {
     int64 importedOn = 3;
 }
 
-message SynchronizeForRequest {
+message ResynchronizeForRequest {
     TargetEvents targetEvents = 1;
     int64 day = 2;
     int64 month = 3;
 }
 
-message SynchronizeForResponse {
+message ResynchronizeForResponse {
     bool status = 1;
 }
 
@@ -59,10 +60,11 @@ message GetEventsResponse {
     EventsCollection eventsCollection = 1;
     int64 day = 2;
     int64 month = 3;
+    Type type = 4;
 }
 service AStudyInHistory {
 
     rpc Import(ImportRequest) returns (ImportResponse);
-    rpc SynchronizeFor(SynchronizeForRequest) returns (SynchronizeForResponse);
+    rpc ResynchronizeFor(ResynchronizeForRequest) returns (ResynchronizeForResponse);
     rpc GetEventsFor(GetEventsRequest) returns (GetEventsResponse);
 }
