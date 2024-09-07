@@ -23,7 +23,7 @@ type Impl struct {
 }
 
 type EventsCollectionResult struct {
-	Coll events.EventsCollection
+	Coll events.Collection
 	Err  error
 }
 
@@ -48,7 +48,7 @@ func New(_ context.Context, cfg Config, logger *zap.SugaredLogger) Interface {
 
 // ImportHistoricalEventsFor implements Interface.
 func (i *Impl) ImportHistoricalEventsFor(ctx context.Context, month int64, day int64) (EventsCollectionResult, error) {
-	coll := events.EventsCollection{
+	coll := events.Collection{
 		Type:   events.Historical,
 		Day:    day,
 		Month:  month,
@@ -71,7 +71,7 @@ func (i *Impl) ImportHistoricalEventsFor(ctx context.Context, month int64, day i
 
 // ImportBirthsFor implements Interface.
 func (i *Impl) ImportBirthsFor(ctx context.Context, month int64, day int64) (EventsCollectionResult, error) {
-	coll := events.EventsCollection{
+	coll := events.Collection{
 		Type:   events.Birth,
 		Day:    day,
 		Month:  month,
@@ -94,7 +94,7 @@ func (i *Impl) ImportBirthsFor(ctx context.Context, month int64, day int64) (Eve
 
 // ImportDeathsFor implements Interface.
 func (i *Impl) ImportDeathsFor(ctx context.Context, month int64, day int64) (EventsCollectionResult, error) {
-	coll := events.EventsCollection{
+	coll := events.Collection{
 		Type:   events.Death,
 		Day:    day,
 		Month:  month,
@@ -117,7 +117,7 @@ func (i *Impl) ImportDeathsFor(ctx context.Context, month int64, day int64) (Eve
 
 // ImportHolidaysFor implements Interface.
 func (i *Impl) ImportHolidaysFor(ctx context.Context, month int64, day int64) (EventsCollectionResult, error) {
-	coll := events.EventsCollection{
+	coll := events.Collection{
 		Type:   events.Holiday,
 		Day:    day,
 		Month:  month,
@@ -138,7 +138,7 @@ func (i *Impl) ImportHolidaysFor(ctx context.Context, month int64, day int64) (E
 	}, nil
 }
 
-func (i *Impl) doImport(ctx context.Context, coll *events.EventsCollection) error {
+func (i *Impl) doImport(ctx context.Context, coll *events.Collection) error {
 	url := fmt.Sprintf("%s/%s/%d/%d", i.path, coll.Type, coll.Month, coll.Day)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {

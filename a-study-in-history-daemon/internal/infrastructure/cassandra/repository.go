@@ -42,12 +42,12 @@ func (o Operation) String() string {
 
 type Interface interface {
 	CreateTablesIfNotExists(ctx context.Context) error
-	ListEventsFor(ctx context.Context, month, day int64) (events.EventsCollection, error)
-	ListHistoricalEventsFor(ctx context.Context, month, day int64) (events.EventsCollection, error)
-	ListBirthsFor(ctx context.Context, month, day int64) (events.EventsCollection, error)
-	ListDeathsFor(ctx context.Context, month, day int64) (events.EventsCollection, error)
-	ListHolidaysFor(ctx context.Context, month, day int64) (events.EventsCollection, error)
-	UpsertEvents(ctxc context.Context, coll events.EventsCollection) error
+	ListEventsFor(ctx context.Context, month, day int64) (events.Collection, error)
+	ListHistoricalEventsFor(ctx context.Context, month, day int64) (events.Collection, error)
+	ListBirthsFor(ctx context.Context, month, day int64) (events.Collection, error)
+	ListDeathsFor(ctx context.Context, month, day int64) (events.Collection, error)
+	ListHolidaysFor(ctx context.Context, month, day int64) (events.Collection, error)
+	UpsertEvents(ctxc context.Context, coll events.Collection) error
 }
 
 type Impl struct {
@@ -132,10 +132,10 @@ func (i *Impl) CreateTablesIfNotExists(ctx context.Context) error {
 	return nil
 }
 
-func (i *Impl) ListEventsFor(ctx context.Context, month int64, day int64) (events.EventsCollection, error) {
+func (i *Impl) ListEventsFor(ctx context.Context, month int64, day int64) (events.Collection, error) {
 	eg, ctx := errgroup.WithContext(ctx)
 
-	var historicalEvents events.EventsCollection
+	var historicalEvents events.Collection
 	eg.Go(func() error {
 		coll, err := i.ListBirthsFor(ctx, month, day)
 		if err != nil {
@@ -145,7 +145,7 @@ func (i *Impl) ListEventsFor(ctx context.Context, month int64, day int64) (event
 		return nil
 	})
 
-	var birthEvents events.EventsCollection
+	var birthEvents events.Collection
 	eg.Go(func() error {
 		coll, err := i.ListBirthsFor(ctx, month, day)
 		if err != nil {
@@ -155,7 +155,7 @@ func (i *Impl) ListEventsFor(ctx context.Context, month int64, day int64) (event
 		return nil
 	})
 
-	var deathEvents events.EventsCollection
+	var deathEvents events.Collection
 	eg.Go(func() error {
 		coll, err := i.ListBirthsFor(ctx, month, day)
 		if err != nil {
@@ -165,7 +165,7 @@ func (i *Impl) ListEventsFor(ctx context.Context, month int64, day int64) (event
 		return nil
 	})
 
-	var holidays events.EventsCollection
+	var holidays events.Collection
 	eg.Go(func() error {
 		coll, err := i.ListBirthsFor(ctx, month, day)
 		if err != nil {
@@ -176,44 +176,44 @@ func (i *Impl) ListEventsFor(ctx context.Context, month int64, day int64) (event
 	})
 	err := eg.Wait()
 	if err != nil {
-		return events.EventsCollection{}, fmt.Errorf("failed to list all events for %d-%d: %w", month, day, err)
+		return events.Collection{}, fmt.Errorf("failed to list all events for %d-%d: %w", month, day, err)
 	}
 	aggregatedEvents := make([]events.Event, 0)
-	slices.Concat(aggregatedEvents, historicalEvents.Collection, birthEvents.Collection, deathEvents.Collection, holidays.Collection)
-	return events.EventsCollection{
-		Month:      month,
-		Day:        day,
-		Collection: aggregatedEvents,
+	slices.Concat(aggregatedEvents, historicalEvents.Events, birthEvents.Events, deathEvents.Events, holidays.Events)
+	return events.Collection{
+		Month:  month,
+		Day:    day,
+		Events: aggregatedEvents,
 	}, nil
 }
 
 // ListBirthsFor implements Interface.
-func (i *Impl) ListBirthsFor(ctx context.Context, month int64, day int64) (events.EventsCollection, error) {
+func (i *Impl) ListBirthsFor(ctx context.Context, month int64, day int64) (events.Collection, error) {
 	return i.doList(ctx, events.Birth, month, day)
 }
 
 // ListDeathsFor implements Interface.
-func (i *Impl) ListDeathsFor(ctx context.Context, month int64, day int64) (events.EventsCollection, error) {
+func (i *Impl) ListDeathsFor(ctx context.Context, month int64, day int64) (events.Collection, error) {
 	return i.doList(ctx, events.Death, month, day)
 }
 
 // ListHistoricalEventsFor implements Interface.
-func (i *Impl) ListHistoricalEventsFor(ctx context.Context, month int64, day int64) (events.EventsCollection, error) {
+func (i *Impl) ListHistoricalEventsFor(ctx context.Context, month int64, day int64) (events.Collection, error) {
 	return i.doList(ctx, events.Historical, month, day)
 }
 
 // ListHolidaysFor implements Interface.
-func (i *Impl) ListHolidaysFor(ctx context.Context, month int64, day int64) (events.EventsCollection, error) {
+func (i *Impl) ListHolidaysFor(ctx context.Context, month int64, day int64) (events.Collection, error) {
 	return i.doList(ctx, events.Holiday, month, day)
 }
 
-func (i *Impl) doList(ctx context.Context, typing events.Type, month, day int64) (events.EventsCollection, error) {
+func (i *Impl) doList(ctx context.Context, typing events.Type, month, day int64) (events.Collection, error) {
 	connRes, ok := i.connectionPool.Get().(*connectionResult)
 	if !ok {
 		i.logger.Panicf("unexpected type while retrieving connection from pool")
 	}
 	if connRes.err != nil {
-		return events.EventsCollection{},
+		return events.Collection{},
 			fmt.Errorf(`something wrong happened while retrieving connection from pool for upserting events %w`,
 				connRes.err)
 	}
@@ -233,7 +233,7 @@ func (i *Impl) doList(ctx context.Context, typing events.Type, month, day int64)
 		},
 	}, ctx)
 	if err != nil {
-		return events.EventsCollection{}, DatabaseError{
+		return events.Collection{}, DatabaseError{
 			Operation: List,
 			Type:      typing,
 			Month:     month,
@@ -241,14 +241,14 @@ func (i *Impl) doList(ctx context.Context, typing events.Type, month, day int64)
 			Err:       err,
 		}
 	}
-	coll := events.EventsCollection{
-		Type:       typing,
-		Day:        day,
-		Month:      month,
-		Collection: make([]events.Event, 0),
+	coll := events.Collection{
+		Type:   typing,
+		Day:    day,
+		Month:  month,
+		Events: make([]events.Event, 0),
 	}
 	for _, r := range res.GetResultSet().GetRows() {
-		coll.Collection = append(coll.Collection, events.Event{
+		coll.Events = append(coll.Events, events.Event{
 			Type:        events.TypeFromString(r.GetValues()[0].GetString_()),
 			Day:         r.GetValues()[1].GetInt(),
 			Month:       r.GetValues()[2].GetInt(),
@@ -267,7 +267,7 @@ func (i *Impl) doList(ctx context.Context, typing events.Type, month, day int64)
 }
 
 // UpsertEvents implements Interface.
-func (i *Impl) UpsertEvents(ctxc context.Context, coll events.EventsCollection) error {
+func (i *Impl) UpsertEvents(ctxc context.Context, coll events.Collection) error {
 	connRes, ok := i.connectionPool.Get().(*connectionResult)
 	if !ok {
 		i.logger.Panicf("unexpected type while retrieving connection from pool")
@@ -292,10 +292,10 @@ func (i *Impl) UpsertEvents(ctxc context.Context, coll events.EventsCollection) 
 	return nil
 }
 
-func (i *Impl) mapEventsCollectionsToBatchInsert(coll events.EventsCollection) *proto.Batch {
+func (i *Impl) mapEventsCollectionsToBatchInsert(coll events.Collection) *proto.Batch {
 	batchUpsert := &proto.Batch{
 		Type:    proto.Batch_UNLOGGED,
-		Queries: make([]*proto.BatchQuery, len(coll.Collection)),
+		Queries: make([]*proto.BatchQuery, len(coll.Events)),
 	}
 	cql := fmt.Sprintf(`
 		INSERT INTO %s.events_by_type_day_month (
@@ -303,21 +303,21 @@ func (i *Impl) mapEventsCollectionsToBatchInsert(coll events.EventsCollection) *
 			thumbnail_source , thumbnail_width , thumbnail_height )
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 	`, i.cfg.Keyspace)
-	for i := range len(coll.Collection) {
+	for i := range len(coll.Events) {
 		batchUpsert.Queries[i] = &proto.BatchQuery{
 			Cql: cql,
 			Values: &proto.Values{
 				Values: []*proto.Value{
-					{Inner: &proto.Value_String_{String_: coll.Collection[i].Type.String()}},
-					{Inner: &proto.Value_Int{Int: coll.Collection[i].Day}},
-					{Inner: &proto.Value_Int{Int: coll.Collection[i].Month}},
-					{Inner: &proto.Value_Int{Int: coll.Collection[i].Year}},
-					{Inner: &proto.Value_String_{String_: coll.Collection[i].ID}},
-					{Inner: &proto.Value_String_{String_: coll.Collection[i].Title}},
-					{Inner: &proto.Value_String_{String_: coll.Collection[i].Description}},
-					{Inner: &proto.Value_String_{String_: coll.Collection[i].Thumbnail.Path}},
-					{Inner: &proto.Value_Int{Int: coll.Collection[i].Thumbnail.Width}},
-					{Inner: &proto.Value_Int{Int: coll.Collection[i].Thumbnail.Height}},
+					{Inner: &proto.Value_String_{String_: coll.Events[i].Type.String()}},
+					{Inner: &proto.Value_Int{Int: coll.Events[i].Day}},
+					{Inner: &proto.Value_Int{Int: coll.Events[i].Month}},
+					{Inner: &proto.Value_Int{Int: coll.Events[i].Year}},
+					{Inner: &proto.Value_String_{String_: coll.Events[i].ID}},
+					{Inner: &proto.Value_String_{String_: coll.Events[i].Title}},
+					{Inner: &proto.Value_String_{String_: coll.Events[i].Description}},
+					{Inner: &proto.Value_String_{String_: coll.Events[i].Thumbnail.Path}},
+					{Inner: &proto.Value_Int{Int: coll.Events[i].Thumbnail.Width}},
+					{Inner: &proto.Value_Int{Int: coll.Events[i].Thumbnail.Height}},
 				},
 			},
 		}

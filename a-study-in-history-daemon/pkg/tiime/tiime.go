@@ -4,7 +4,7 @@ import "time"
 
 const DaysInYear = 365
 
-var totalDaysAtMonthStart [12]int64 = [12]int64{
+var totalDaysAtMonthStart = [12]int64{
 	0,
 	31,
 	59,

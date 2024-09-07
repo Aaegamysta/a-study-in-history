@@ -18,15 +18,20 @@ type Server struct {
 	gen.UnimplementedAStudyInHistoryServer
 	logger   *zap.SugaredLogger
 	importer importer.Interface
-	synch    resync.Interface
+	resync   resync.Interface
 	collect  collector.Interface
 }
 
-func New(_ context.Context, logger *zap.SugaredLogger, importer importer.Interface, synch resync.Interface, collect collector.Interface) gen.AStudyInHistoryServer {
+func New(_ context.Context,
+	logger *zap.SugaredLogger,
+	importer importer.Interface,
+	resync resync.Interface,
+	collect collector.Interface,
+) gen.AStudyInHistoryServer {
 	return Server{
 		logger:   logger,
 		importer: importer,
-		synch:    synch,
+		resync:   resync,
 		collect:  collect,
 	}
 }
@@ -37,7 +42,7 @@ func (s Server) GetEventsFor(ctx context.Context, req *gen.GetEventsRequest) (*g
 	if validationErr != nil {
 		return nil, validationErr
 	}
-	var coll events.EventsCollection
+	var coll events.Collection
 	var err error
 	switch req.GetTargetEvents() {
 	case gen.TargetEvents_TARGET_EVENTS_BIRTH:
@@ -60,7 +65,10 @@ func (s Server) GetEventsFor(ctx context.Context, req *gen.GetEventsRequest) (*g
 		)
 	}
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "an error happened while getting %s events for %d-%d", req.GetTargetEvents(), req.GetMonth(), req.GetDay())
+		return nil,
+			status.Errorf(codes.Internal, "an error happened while getting %s events for %d-%d",
+				req.GetTargetEvents(), req.GetMonth(), req.GetDay(),
+			)
 	}
 	res := &gen.GetEventsResponse{
 		Type:             gen.Type(coll.Type),
@@ -96,14 +104,17 @@ func (s Server) ResynchronizeFor(ctx context.Context, req *gen.ResynchronizeForR
 	if err != nil {
 		return nil, err
 	}
-	err = s.synch.Resynchronize(ctx, resync.TargetEvents(req.GetTargetEvents()), req.GetMonth(), req.GetDay())
+	err = s.resync.Resynchronize(ctx, resync.TargetEvents(req.GetTargetEvents()), req.GetMonth(), req.GetDay())
 	if errors.Is(err, resync.ErrEventsOutOfSync) {
 		return &gen.ResynchronizeForResponse{
 			Status: true,
 		}, nil
 	}
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "something wrong happened while attempting to synchronize %s events for %d-%d", req.GetTargetEvents(), req.GetMonth(), req.GetDay())
+		return nil,
+			status.Errorf(codes.Internal, "something wrong happened while attempting to synchronize %s events for %d-%d",
+				req.GetTargetEvents(), req.GetMonth(), req.GetDay(),
+			)
 	}
 	return &gen.ResynchronizeForResponse{
 		Status: false,

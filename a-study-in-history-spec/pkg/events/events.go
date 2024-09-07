@@ -1,14 +1,17 @@
 package events
 
 import (
+	//nolint: gosec // MD5 is used for generating unique IDs, not for cryptographic purposes
 	"crypto/md5"
 	"encoding/hex"
+	"fmt"
+	"reflect"
 	"strconv"
 
 	"github.com/aaegamysta/a-study-in-history/spec/gen"
 )
 
-type Type int64
+type Type int32
 
 const (
 	Unspecified Type = iota
@@ -69,11 +72,33 @@ type Event struct {
 	Thumbnail   Thumbnail
 }
 
-type EventsCollection struct {
-	Type       Type
-	Day        int64
-	Month      int64
-	Collection []Event
+func (e Event) FormatForPosting() string {
+	return fmt.Sprintf("On this day, %d-%d-%d, %s", e.Day, e.Month, e.Year, e.Title)
+}
+
+type Collection struct {
+	Type   Type
+	Day    int64
+	Month  int64
+	Events []Event
+}
+
+func (e1 *Collection) Equals(e2 *Collection) bool {
+	if e1 == nil {
+		return false
+	}
+	if e1.Day != e2.Day || e1.Month != e2.Month {
+		return false
+	}
+	if len(e1.Events) != len(e2.Events) {
+		return false
+	}
+	for i := range len(e1.Events) {
+		if !reflect.DeepEqual(e1.Events[i].Type, e2.Events[i].Type) {
+			return false
+		}
+	}
+	return true
 }
 
 func mapEventToGRPC(e Event) *gen.Event {
@@ -92,19 +117,49 @@ func mapEventToGRPC(e Event) *gen.Event {
 	}
 }
 
-func MapEventsCollectionToGRPC(coll EventsCollection) *gen.EventsCollection {
+func mapGRPCToEvent(e *gen.Event) Event {
+	return Event{
+		Type:        Type(e.GetType()),
+		Day:         e.GetDay(),
+		Month:       e.GetMonth(),
+		Year:        e.GetYear(),
+		Title:       e.GetTitle(),
+		Description: e.GetDescription(),
+		Thumbnail: Thumbnail{
+			Path:   e.GetThumbnail().GetUrl(),
+			Width:  e.GetThumbnail().GetWidth(),
+			Height: e.GetThumbnail().GetHeight(),
+		},
+	}
+}
+
+func MapEventsCollectionToGRPC(coll Collection) *gen.EventsCollection {
 	grpcColl := gen.EventsCollection{
 		Events: make([]*gen.Event, 0),
 		Type:   gen.Type(coll.Type),
 		Day:    coll.Day,
 		Month:  coll.Month,
 	}
-	for _, e := range coll.Collection {
+	for _, e := range coll.Events {
 		grpcColl.Events = append(grpcColl.Events, mapEventToGRPC(e))
 	}
 	return &grpcColl
 }
 
+func MapGRPCToEventsCollection(grpcColl *gen.EventsCollection) Collection {
+	coll := Collection{
+		Events: make([]Event, 0),
+		Type:   Type(grpcColl.GetType()),
+		Day:    grpcColl.GetDay(),
+		Month:  grpcColl.GetMonth(),
+	}
+	for _, e := range grpcColl.GetEvents() {
+		coll.Events = append(coll.Events, mapGRPCToEvent(e))
+	}
+	return coll
+}
+
+// nolint: gosec // MD5 is used for generating unique IDs, not for cryptographic purposes
 func GenerateEventID(typing Type, month, day, year int64, title string) string {
 	h := md5.New()
 	h.Write([]byte(typing.String()))

@@ -9,11 +9,11 @@ import (
 )
 
 type Interface interface {
-	ListEventsFor(ctx context.Context, month, day int64) (events.EventsCollection, error)
-	ListHistoricalEventsFor(ctx context.Context, month, day int64) (events.EventsCollection, error)
-	ListBirthsFor(ctx context.Context, month, day int64) (events.EventsCollection, error)
-	ListDeathsFor(ctx context.Context, month, day int64) (events.EventsCollection, error)
-	ListHolidaysFor(ctx context.Context, month, day int64) (events.EventsCollection, error)
+	ListEventsFor(ctx context.Context, month, day int64) (events.Collection, error)
+	ListHistoricalEventsFor(ctx context.Context, month, day int64) (events.Collection, error)
+	ListBirthsFor(ctx context.Context, month, day int64) (events.Collection, error)
+	ListDeathsFor(ctx context.Context, month, day int64) (events.Collection, error)
+	ListHolidaysFor(ctx context.Context, month, day int64) (events.Collection, error)
 }
 
 type Implementation struct {
@@ -21,7 +21,7 @@ type Implementation struct {
 	repository cassandra.Interface
 }
 
-func New(ctx context.Context, logger *zap.SugaredLogger, repository cassandra.Interface) Interface {
+func New(_ context.Context, logger *zap.SugaredLogger, repository cassandra.Interface) Interface {
 	return &Implementation{
 		logger:     logger,
 		repository: repository,
@@ -29,51 +29,51 @@ func New(ctx context.Context, logger *zap.SugaredLogger, repository cassandra.In
 }
 
 // ListEventsFor implements Interface.
-func (i *Implementation) ListEventsFor(ctx context.Context, month int64, day int64) (events.EventsCollection, error) {
+func (i *Implementation) ListEventsFor(ctx context.Context, month int64, day int64) (events.Collection, error) {
 	coll, err := i.repository.ListEventsFor(ctx, month, day)
 	if err != nil {
 		i.logger.Errorw("failed to list all events", "error", err)
-		return events.EventsCollection{}, err
+		return events.Collection{}, err
 	}
 	return coll, nil
 }
 
 // ListBirthsFor implements Interface.
-func (i *Implementation) ListBirthsFor(ctx context.Context, month int64, day int64) (events.EventsCollection, error) {
+func (i *Implementation) ListBirthsFor(ctx context.Context, month int64, day int64) (events.Collection, error) {
 	coll, err := i.repository.ListBirthsFor(ctx, month, day)
 	if err != nil {
 		i.logger.Errorw("failed to list all events", "error", err)
-		return events.EventsCollection{}, err
+		return events.Collection{}, err
 	}
 	return coll, nil
 }
 
 // ListDeathsFor implements Interface.
-func (i *Implementation) ListDeathsFor(ctx context.Context, month int64, day int64) (events.EventsCollection, error) {
+func (i *Implementation) ListDeathsFor(ctx context.Context, month int64, day int64) (events.Collection, error) {
 	coll, err := i.repository.ListDeathsFor(ctx, month, day)
 	if err != nil {
 		i.logger.Errorw("failed to list all events", "error", err)
-		return events.EventsCollection{}, err
+		return events.Collection{}, err
 	}
 	return coll, nil
 }
 
 // ListHistoricalEventsFor implements Interface.
-func (i *Implementation) ListHistoricalEventsFor(ctx context.Context, month int64, day int64) (events.EventsCollection, error) {
+func (i *Implementation) ListHistoricalEventsFor(ctx context.Context, month int64, day int64) (events.Collection, error) {
 	coll, err := i.repository.ListHistoricalEventsFor(ctx, month, day)
 	if err != nil {
 		i.logger.Errorw("failed to list all events", "error", err)
-		return events.EventsCollection{}, err
+		return events.Collection{}, err
 	}
 	return coll, nil
 }
 
 // ListHolidaysFor implements Interface.
-func (i *Implementation) ListHolidaysFor(ctx context.Context, month int64, day int64) (events.EventsCollection, error) {
+func (i *Implementation) ListHolidaysFor(ctx context.Context, month int64, day int64) (events.Collection, error) {
 	coll, err := i.repository.ListHolidaysFor(ctx, month, day)
 	if err != nil {
 		i.logger.Errorw("failed to list all events", "error", err)
-		return events.EventsCollection{}, err
+		return events.Collection{}, err
 	}
 	return coll, nil
 }
