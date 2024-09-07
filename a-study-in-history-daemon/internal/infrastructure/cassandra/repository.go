@@ -4,18 +4,19 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"math"
 	"slices"
 	"sync"
-
-	"github.com/stargate/stargate-grpc-go-client/stargate/pkg/proto"
-	"golang.org/x/sync/errgroup"
 
 	"github.com/aaegamysta/a-study-in-history/spec/pkg/events"
 	"github.com/stargate/stargate-grpc-go-client/stargate/pkg/auth"
 	"github.com/stargate/stargate-grpc-go-client/stargate/pkg/client"
+	"github.com/stargate/stargate-grpc-go-client/stargate/pkg/proto"
 	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
 type Operation int64
@@ -25,6 +26,19 @@ const (
 	Upsert
 	List
 )
+
+func (o Operation) String() string {
+	switch o {
+	case Unspecified:
+		return "unspecified"
+	case Upsert:
+		return "upsert"
+	case List:
+		return "list"
+	default:
+		return "unknown"
+	}
+}
 
 type Interface interface {
 	CreateTablesIfNotExists(ctx context.Context) error
@@ -59,13 +73,14 @@ func (d DatabaseError) Error() string {
 	return fmt.Sprintf("failed to %s %s events for %d-%d", d.Operation, d.Type, d.Month, d.Day)
 }
 
-func New(ctx context.Context, cfg Config, logger *zap.SugaredLogger) Interface {
+func New(_ context.Context, cfg Config, logger *zap.SugaredLogger) Interface {
 	impl := &Impl{
 		cfg:    cfg,
 		logger: logger,
 	}
 	impl.connectionPool = sync.Pool{
 		New: func() any {
+			//nolint:gosec // usgae of InsecureSkipVerify is intentional and as stated by documentation fo Datastax
 			config := &tls.Config{
 				InsecureSkipVerify: false,
 			}
@@ -108,9 +123,9 @@ func (i *Impl) CreateTablesIfNotExists(ctx context.Context) error {
 			PRIMARY KEY ((type, day, month), year, id)
 		)
 	`, i.cfg.Keyspace)
-	_, err := cassandraClient.ExecuteQuery(&proto.Query{
+	_, err := cassandraClient.ExecuteQueryWithContext(&proto.Query{
 		Cql: cql,
-	})
+	}, ctx)
 	if err != nil {
 		return err
 	}
@@ -164,11 +179,11 @@ func (i *Impl) ListEventsFor(ctx context.Context, month int64, day int64) (event
 		return events.EventsCollection{}, fmt.Errorf("failed to list all events for %d-%d: %w", month, day, err)
 	}
 	aggregatedEvents := make([]events.Event, 0)
-	slices.Concat(aggregatedEvents, historicalEvents.Events, birthEvents.Events, deathEvents.Events, holidays.Events)
+	slices.Concat(aggregatedEvents, historicalEvents.Collection, birthEvents.Collection, deathEvents.Collection, holidays.Collection)
 	return events.EventsCollection{
-		Month:  month,
-		Day:    day,
-		Events: aggregatedEvents,
+		Month:      month,
+		Day:        day,
+		Collection: aggregatedEvents,
 	}, nil
 }
 
@@ -198,7 +213,9 @@ func (i *Impl) doList(ctx context.Context, typing events.Type, month, day int64)
 		i.logger.Panicf("unexpected type while retrieving connection from pool")
 	}
 	if connRes.err != nil {
-		return events.EventsCollection{}, fmt.Errorf("something wrong happened while retrieving connection from pool for upserting events %w", connRes.err)
+		return events.EventsCollection{},
+			fmt.Errorf(`something wrong happened while retrieving connection from pool for upserting events %w`,
+				connRes.err)
 	}
 	conn := connRes.conn
 	// NewStargateClientWithConn implementation never returns an error
@@ -208,9 +225,12 @@ func (i *Impl) doList(ctx context.Context, typing events.Type, month, day int64)
 		Cql: cql,
 		Values: &proto.Values{Values: []*proto.Value{
 			{Inner: &proto.Value_String_{String_: typing.String()}},
-			{Inner: &proto.Value_Int{month}},
-			{Inner: &proto.Value_Int{day}},
+			{Inner: &proto.Value_Int{Int: month}},
+			{Inner: &proto.Value_Int{Int: day}},
 		}},
+		Parameters: &proto.QueryParameters{
+			PageSize: wrapperspb.Int32(math.MaxInt32),
+		},
 	}, ctx)
 	if err != nil {
 		return events.EventsCollection{}, DatabaseError{
@@ -222,25 +242,25 @@ func (i *Impl) doList(ctx context.Context, typing events.Type, month, day int64)
 		}
 	}
 	coll := events.EventsCollection{
-		Type:   events.Holiday,
-		Day:    day,
-		Month:  month,
-		Events: make([]events.Event, 0),
+		Type:       events.Holiday,
+		Day:        day,
+		Month:      month,
+		Collection: make([]events.Event, 0),
 	}
-	for _, r := range res.GetResultSet().Rows {
-		coll.Events = append(coll.Events, events.Event{
-			Type:        events.TypeFromString(r.Values[0].GetString_()),
-			Day:         r.Values[1].GetInt(),
-			Month:       r.Values[2].GetInt(),
-			Year:        r.Values[3].GetInt(),
-			ID:          r.Values[4].GetString_(),
-			Description: r.Values[5].GetString_(),
+	for _, r := range res.GetResultSet().GetRows() {
+		coll.Collection = append(coll.Collection, events.Event{
+			Type:        events.TypeFromString(r.GetValues()[0].GetString_()),
+			Day:         r.GetValues()[1].GetInt(),
+			Month:       r.GetValues()[2].GetInt(),
+			Year:        r.GetValues()[3].GetInt(),
+			ID:          r.GetValues()[4].GetString_(),
+			Description: r.GetValues()[5].GetString_(),
 			Thumbnail: events.Thumbnail{
-				Path:   r.Values[6].GetString_(),
-				Height: r.Values[7].GetInt(),
-				Width:  r.Values[8].GetInt(),
+				Path:   r.GetValues()[7].GetString_(),
+				Height: r.GetValues()[6].GetInt(),
+				Width:  r.GetValues()[8].GetInt(),
 			},
-			Title: r.Values[9].GetString_(),
+			Title: r.GetValues()[9].GetString_(),
 		})
 	}
 	return coll, nil
@@ -275,7 +295,7 @@ func (i *Impl) UpsertEvents(ctxc context.Context, coll events.EventsCollection) 
 func (i *Impl) mapEventsCollectionsToBatchInsert(coll events.EventsCollection) *proto.Batch {
 	batchUpsert := &proto.Batch{
 		Type:    proto.Batch_UNLOGGED,
-		Queries: make([]*proto.BatchQuery, len(coll.Events)),
+		Queries: make([]*proto.BatchQuery, len(coll.Collection)),
 	}
 	cql := fmt.Sprintf(`
 		INSERT INTO %s.events_by_type_day_month (
@@ -283,21 +303,21 @@ func (i *Impl) mapEventsCollectionsToBatchInsert(coll events.EventsCollection) *
 			thumbnail_source , thumbnail_width , thumbnail_height )
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 	`, i.cfg.Keyspace)
-	for i := range len(coll.Events) {
+	for i := range len(coll.Collection) {
 		batchUpsert.Queries[i] = &proto.BatchQuery{
 			Cql: cql,
 			Values: &proto.Values{
 				Values: []*proto.Value{
-					{Inner: &proto.Value_String_{coll.Events[i].Type.String()}},
-					{Inner: &proto.Value_Int{coll.Events[i].Day}},
-					{Inner: &proto.Value_Int{coll.Events[i].Month}},
-					{Inner: &proto.Value_Int{coll.Events[i].Year}},
-					{Inner: &proto.Value_String_{coll.Events[i].ID}},
-					{Inner: &proto.Value_String_{coll.Events[i].Title}},
-					{Inner: &proto.Value_String_{coll.Events[i].Description}},
-					{Inner: &proto.Value_String_{coll.Events[i].Thumbnail.Path}},
-					{Inner: &proto.Value_Int{coll.Events[i].Thumbnail.Width}},
-					{Inner: &proto.Value_Int{coll.Events[i].Thumbnail.Height}},
+					{Inner: &proto.Value_String_{String_: coll.Collection[i].Type.String()}},
+					{Inner: &proto.Value_Int{Int: coll.Collection[i].Day}},
+					{Inner: &proto.Value_Int{Int: coll.Collection[i].Month}},
+					{Inner: &proto.Value_Int{Int: coll.Collection[i].Year}},
+					{Inner: &proto.Value_String_{String_: coll.Collection[i].ID}},
+					{Inner: &proto.Value_String_{String_: coll.Collection[i].Title}},
+					{Inner: &proto.Value_String_{String_: coll.Collection[i].Description}},
+					{Inner: &proto.Value_String_{String_: coll.Collection[i].Thumbnail.Path}},
+					{Inner: &proto.Value_Int{Int: coll.Collection[i].Thumbnail.Width}},
+					{Inner: &proto.Value_Int{Int: coll.Collection[i].Thumbnail.Height}},
 				},
 			},
 		}
