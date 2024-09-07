@@ -47,7 +47,7 @@ type Interface interface {
 	ListBirthsFor(ctx context.Context, month, day int64) (events.Collection, error)
 	ListDeathsFor(ctx context.Context, month, day int64) (events.Collection, error)
 	ListHolidaysFor(ctx context.Context, month, day int64) (events.Collection, error)
-	UpsertEvents(ctxc context.Context, coll events.Collection) error
+	UpsertEvents(ctx context.Context, coll events.Collection) error
 }
 
 type Impl struct {
@@ -106,14 +106,19 @@ func New(_ context.Context, cfg Config, logger *zap.SugaredLogger) Interface {
 
 // CreateTablesIfNotExists implements Interface.
 func (i *Impl) CreateTablesIfNotExists(ctx context.Context) error {
-	connRes, ok := i.connectionPool.Get().(*connectionResult)
-	if !ok {
-		i.logger.Panicf("unexpected type while retrieving connection from pool")
+	config := &tls.Config{
+		InsecureSkipVerify: false,
 	}
-	if connRes.err != nil {
-		return fmt.Errorf("something wrong happened while creating tables %w", connRes.err)
+	conn, err := grpc.NewClient(i.cfg.ConnectionString, grpc.WithTransportCredentials(credentials.NewTLS(config)),
+		grpc.WithPerRPCCredentials(
+			auth.NewStaticTokenProvider(i.cfg.Token),
+		),
+	)
+	if err != nil {
+		return fmt.Errorf("failed to create remote client connection to cassandra: %w", err)
 	}
-	conn := connRes.conn
+	defer conn.Close()
+
 	// NewStargateClientWithConn implementation never returns an error
 	cassandraClient, _ := client.NewStargateClientWithConn(conn)
 	cql := fmt.Sprintf(`
@@ -123,7 +128,7 @@ func (i *Impl) CreateTablesIfNotExists(ctx context.Context) error {
 			PRIMARY KEY ((type, day, month), year, id)
 		)
 	`, i.cfg.Keyspace)
-	_, err := cassandraClient.ExecuteQueryWithContext(&proto.Query{
+	_, err = cassandraClient.ExecuteQueryWithContext(&proto.Query{
 		Cql: cql,
 	}, ctx)
 	if err != nil {
@@ -208,16 +213,18 @@ func (i *Impl) ListHolidaysFor(ctx context.Context, month int64, day int64) (eve
 }
 
 func (i *Impl) doList(ctx context.Context, typing events.Type, month, day int64) (events.Collection, error) {
-	connRes, ok := i.connectionPool.Get().(*connectionResult)
-	if !ok {
-		i.logger.Panicf("unexpected type while retrieving connection from pool")
+	// connRes, ok := i.connectionPool.Get().(*connectionResult)
+
+	config := &tls.Config{
+		InsecureSkipVerify: false,
 	}
-	if connRes.err != nil {
-		return events.Collection{},
-			fmt.Errorf(`something wrong happened while retrieving connection from pool for upserting events %w`,
-				connRes.err)
-	}
-	conn := connRes.conn
+	conn, err := grpc.NewClient(i.cfg.ConnectionString, grpc.WithTransportCredentials(credentials.NewTLS(config)),
+		grpc.WithPerRPCCredentials(
+			auth.NewStaticTokenProvider(i.cfg.Token),
+		),
+	)
+
+	defer conn.Close()
 	// NewStargateClientWithConn implementation never returns an error
 	cassandraClient, _ := client.NewStargateClientWithConn(conn)
 	cql := fmt.Sprintf(`SELECT * FROM %s.events_by_type_day_month WHERE type = ? AND month = ? AND day = ?;`, i.cfg.Keyspace)
@@ -267,19 +274,25 @@ func (i *Impl) doList(ctx context.Context, typing events.Type, month, day int64)
 }
 
 // UpsertEvents implements Interface.
-func (i *Impl) UpsertEvents(ctxc context.Context, coll events.Collection) error {
-	connRes, ok := i.connectionPool.Get().(*connectionResult)
-	if !ok {
-		i.logger.Panicf("unexpected type while retrieving connection from pool")
+func (i *Impl) UpsertEvents(ctx context.Context, coll events.Collection) error {
+	// connRes, ok := i.connectionPool.Get().(*connectionResult)
+
+	config := &tls.Config{
+		InsecureSkipVerify: false,
 	}
-	if connRes.err != nil {
-		return fmt.Errorf("something wrong happened while retrieving connection from pool for upserting events %w", connRes.err)
+	conn, err := grpc.NewClient(i.cfg.ConnectionString, grpc.WithTransportCredentials(credentials.NewTLS(config)),
+		grpc.WithPerRPCCredentials(
+			auth.NewStaticTokenProvider(i.cfg.Token),
+		),
+	)
+	if err != nil {
+		return fmt.Errorf("failed to create remote client connection to cassandra: %w", err)
 	}
-	conn := connRes.conn
+	defer conn.Close()
 	// NewStargateClientWithConn implementation never returns an error
 	cassandraClient, _ := client.NewStargateClientWithConn(conn)
 	batchUpsert := i.mapEventsCollectionsToBatchInsert(coll)
-	_, err := cassandraClient.ExecuteBatchWithContext(batchUpsert, ctxc)
+	_, err = cassandraClient.ExecuteBatchWithContext(batchUpsert, ctx)
 	if err != nil {
 		return DatabaseError{
 			Operation: Upsert,
