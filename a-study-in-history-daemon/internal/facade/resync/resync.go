@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"log"
 	"sort"
 
 	"github.com/aaegamysta/a-study-in-history/daemon/internal/infrastructure/cassandra"
@@ -45,23 +44,22 @@ type Impl struct {
  * There might be an issue with this way of sorting for holidays as they do not have a specified year.
  */
 func (i *Impl) Resynchronize(ctx context.Context, typo TargetEvents, month int64, day int64) error {
-	eg, ctx := errgroup.WithContext(ctx)
+	eg, ctxForErrGroup := errgroup.WithContext(ctx)
 	var totalFetchedEventsHash string
 	var totalPersistedEventsHash string
 	var candidateUpdatedEventsColl events.Collection
-	var fromDataBase events.Collection
 	eg.Go(func() error {
 		var collRes wikipedia.EventsCollectionResult
 		var err error
 		switch typo {
 		case History:
-			collRes, err = i.wikipediaClient.ImportHistoricalEventsFor(ctx, month, day)
+			collRes, err = i.wikipediaClient.ImportHistoricalEventsFor(ctxForErrGroup, month, day)
 		case Birth:
-			collRes, err = i.wikipediaClient.ImportBirthsFor(ctx, month, day)
+			collRes, err = i.wikipediaClient.ImportBirthsFor(ctxForErrGroup, month, day)
 		case Death:
-			collRes, err = i.wikipediaClient.ImportDeathsFor(ctx, month, day)
+			collRes, err = i.wikipediaClient.ImportDeathsFor(ctxForErrGroup, month, day)
 		case Holiday:
-			collRes, err = i.wikipediaClient.ImportHolidaysFor(ctx, month, day)
+			collRes, err = i.wikipediaClient.ImportHolidaysFor(ctxForErrGroup, month, day)
 		case All:
 			panic("add a method to the wikipedia client to fetch all events")
 		default:
@@ -92,15 +90,15 @@ func (i *Impl) Resynchronize(ctx context.Context, typo TargetEvents, month int64
 		var err error
 		switch typo {
 		case History:
-			coll, err = i.cassandraClient.ListHistoricalEventsFor(ctx, month, day)
+			coll, err = i.cassandraClient.ListHistoricalEventsFor(ctxForErrGroup, month, day)
 		case Birth:
-			coll, err = i.cassandraClient.ListBirthsFor(ctx, month, day)
+			coll, err = i.cassandraClient.ListBirthsFor(ctxForErrGroup, month, day)
 		case Death:
-			coll, err = i.cassandraClient.ListDeathsFor(ctx, month, day)
+			coll, err = i.cassandraClient.ListDeathsFor(ctxForErrGroup, month, day)
 		case Holiday:
-			coll, err = i.cassandraClient.ListHolidaysFor(ctx, month, day)
+			coll, err = i.cassandraClient.ListHolidaysFor(ctxForErrGroup, month, day)
 		case All:
-			coll, err = i.cassandraClient.ListEventsFor(ctx, month, day)
+			coll, err = i.cassandraClient.ListEventsFor(ctxForErrGroup, month, day)
 		default:
 			return fmt.Errorf("unknown target events type: %d", typo)
 		}
@@ -119,7 +117,6 @@ func (i *Impl) Resynchronize(ctx context.Context, typo TargetEvents, month int64
 			h.Write([]byte(e.ID))
 		}
 		sum := h.Sum(nil)
-		fromDataBase = coll
 		totalPersistedEventsHash = hex.EncodeToString(sum)
 		return nil
 	})
@@ -138,7 +135,6 @@ func (i *Impl) Resynchronize(ctx context.Context, typo TargetEvents, month int64
 	if err != nil {
 		return fmt.Errorf("an error occurred while trying to upsert and update events during resynchronization: %w", err)
 	}
-	log.Println(fromDataBase.Events)
 	return ErrEventsOutOfSync
 }
 

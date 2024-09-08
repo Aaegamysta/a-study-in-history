@@ -184,7 +184,7 @@ func (i *Impl) ListEventsFor(ctx context.Context, month int64, day int64) (event
 		return events.Collection{}, fmt.Errorf("failed to list all events for %d-%d: %w", month, day, err)
 	}
 	aggregatedEvents := make([]events.Event, 0)
-	slices.Concat(aggregatedEvents, historicalEvents.Events, birthEvents.Events, deathEvents.Events, holidays.Events)
+	aggregatedEvents = slices.Concat(aggregatedEvents, historicalEvents.Events, birthEvents.Events, deathEvents.Events, holidays.Events)
 	return events.Collection{
 		Month:  month,
 		Day:    day,

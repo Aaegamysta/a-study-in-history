@@ -33,10 +33,12 @@ func (i *Impl) parseEvents(_ context.Context, coll *events.Collection, r io.Read
 	if offset == 0 || bytes == nil {
 		return fmt.Errorf("error happened while parsing %s events on %d-%d: array is empty", coll.Type, coll.Month, coll.Day)
 	}
+	//nolint staticcheck // parsingErr is used as a way to return error from the callback
 	offset, err = jsonparser.ArrayEach(bytes, func(b []byte, _ jsonparser.ValueType, _ int, parsingErr error) {
-		title, err := jsonparser.GetString(b, "text")
-		if err != nil {
-			parsingErr = err
+		title, parseTitleErr := jsonparser.GetString(b, "text")
+		if parseTitleErr != nil {
+			//nolint errcheck // parsingErr is used as a way to return error from the callback
+			parsingErr = parseTitleErr
 			return
 		}
 		// not all events like holidays have no year

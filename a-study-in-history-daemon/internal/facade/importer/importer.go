@@ -2,6 +2,7 @@ package importer
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"sync"
@@ -16,12 +17,13 @@ import (
 )
 
 type (
-	ImportStatus int64
-	Stage        int64
+	ImportStatus int32
+	Stage        int32
 )
 
 const (
-	Success ImportStatus = iota
+	UNSPECIFIED ImportStatus = iota
+	Success
 	PartialSuccess
 	Failed
 )
@@ -50,7 +52,7 @@ type ImportResult struct {
 }
 
 type ImportPipelineStageResult struct {
-	Events events.EventsCollection
+	Events events.Collection
 	Error  error
 }
 
@@ -88,7 +90,9 @@ func New(ctx context.Context, logger *zap.SugaredLogger, cfg Config,
 	}
 	if cfg.ImportAtStart {
 		importResult := impl.Import(ctx)
-		impl.logger.Debugf("importing at start complete at %s was %s with %s missed events", importResult.ImportedOn, importResult.Status, len(importResult.MissedOutEvents))
+		impl.logger.Debugf("importing at start complete at %s was %s with %s missed events",
+			importResult.ImportedOn, importResult.Status, len(importResult.MissedOutEvents),
+		)
 	}
 	return impl
 }
@@ -126,6 +130,11 @@ func (i *Impl) importConcurrently(ctx context.Context) ImportResult {
 	})
 	err := eg.Wait()
 	if err != nil {
+		i.logger.Errorf("an error occurred while importing events concurrently: %v", err)
+		return ImportResult{
+			Status:     Failed,
+			ImportedOn: time.Now(),
+		}
 	}
 	aggregatedImportResult := aggregateImportResults(historicalEventsImportResult,
 		birthsImportResult,
@@ -140,7 +149,11 @@ func (i *Impl) importSequentially(ctx context.Context) ImportResult {
 	birthsImportResult := i.doImport(ctx, events.Birth)
 	deathsImportResult := i.doImport(ctx, events.Death)
 	holidaysImportResult := i.doImport(ctx, events.Holiday)
-	aggregatedImportResult := aggregateImportResults(historicalEventsImportResult, birthsImportResult, holidaysImportResult, deathsImportResult)
+	aggregatedImportResult := aggregateImportResults(historicalEventsImportResult,
+		birthsImportResult,
+		holidaysImportResult,
+		deathsImportResult,
+	)
 	return aggregatedImportResult
 }
 
@@ -154,7 +167,11 @@ func (i *Impl) doImport(ctx context.Context, typing events.Type) ImportResult {
 	return importResult
 }
 
-func (i *Impl) retrieveEventsPipelineStage(ctx context.Context, typing events.Type, month, day int64) <-chan ImportPipelineStageResult {
+func (i *Impl) retrieveEventsPipelineStage(ctx context.Context,
+	typing events.Type,
+	month,
+	day int64,
+) <-chan ImportPipelineStageResult {
 	retrievedEventsStream := make(chan ImportPipelineStageResult)
 	go func() {
 		defer close(retrievedEventsStream)
@@ -173,6 +190,10 @@ func (i *Impl) retrieveEventsPipelineStage(ctx context.Context, typing events.Ty
 				coll, err = i.wikipediaClient.ImportDeathsFor(ctx, month, day)
 			case events.Holiday:
 				coll, err = i.wikipediaClient.ImportHolidaysFor(ctx, month, day)
+			case events.Unspecified:
+				fallthrough
+			default:
+				i.logger.Panicf("unknown event type: %s", typing)
 			}
 			if err != nil {
 				retrievedEventsStream <- ImportPipelineStageResult{
@@ -194,11 +215,17 @@ func (i *Impl) retrieveEventsPipelineStage(ctx context.Context, typing events.Ty
 	return retrievedEventsStream
 }
 
-func (i *Impl) persistEventsPipelineStage(ctx context.Context, retrievedEventsStream <-chan ImportPipelineStageResult) <-chan ImportPipelineStageResult {
+func (i *Impl) persistEventsPipelineStage(ctx context.Context,
+	retrievedEventsStream <-chan ImportPipelineStageResult,
+) <-chan ImportPipelineStageResult {
 	persistedEventsStream := make(chan ImportPipelineStageResult)
 	go func() {
+		timeOutCtx, cancel := context.WithTimeout(ctx, time.Minute*5)
+		defer cancel()
 		defer close(persistedEventsStream)
 		select {
+		case <-timeOutCtx.Done():
+			return
 		case <-ctx.Done():
 			return
 		case eventsColl := <-retrievedEventsStream:
@@ -208,7 +235,7 @@ func (i *Impl) persistEventsPipelineStage(ctx context.Context, retrievedEventsSt
 			err := i.cassandraClient.UpsertEvents(ctx, eventsColl.Events)
 			if err != nil {
 				persistedEventsStream <- ImportPipelineStageResult{
-					Events: events.EventsCollection{},
+					Events: events.Collection{},
 					Error: PipelineStageError{
 						Stage: Persisting,
 						Type:  eventsColl.Events.Type,
@@ -244,17 +271,22 @@ func (i *Impl) fanInFetchedPersistedEvents(ctx context.Context, eventsStream ...
 			mu.Lock()
 			defer mu.Unlock()
 			if result.Error != nil {
-				stageErr := result.Error.(PipelineStageError)
+				var stageErr PipelineStageError
+				_ = errors.As(result.Error, &stageErr)
 				missedOutEvents = append(missedOutEvents, events.Event{
 					Type:  stageErr.Type,
 					Day:   stageErr.Day,
 					Month: stageErr.Month,
 				})
-				i.logger.Debugf("an error occurred at stage %s while importing %s events on %d-%d, missed out on %d events", stageErr.Type, stageErr.Type, stageErr.Month, stageErr.Day)
+				i.logger.Debugf("an error occurred at stage %s while importing %s events on %d-%d, missed out on %d events",
+					stageErr.Type, stageErr.Type, stageErr.Month, stageErr.Day,
+				)
 				return
 			}
-			totalFetchedEvents += len(result.Events.Collection)
-			i.logger.Debugf("retrieved and persisted %s events on %d-%d totalling %d", result.Events.Type, result.Events.Month, result.Events.Day, len(result.Events.Collection))
+			totalFetchedEvents += len(result.Events.Events)
+			i.logger.Debugf("retrieved and persisted %s events on %d-%d totalling %d",
+				result.Events.Type, result.Events.Month, result.Events.Day, len(result.Events.Events),
+			)
 		}
 	}
 
@@ -274,7 +306,9 @@ func (i *Impl) fanInFetchedPersistedEvents(ctx context.Context, eventsStream ...
 	case totalFetchedEvents == 0:
 		importStatus = Failed
 	}
-	i.logger.Debugf("fetching, persistence and fanning in of %d events with %d missed out events %s completed", totalFetchedEvents, len(missedOutEvents), importStatus)
+	i.logger.Debugf("fetching, persistence and fanning in of %d events with %d missed out events %s completed",
+		totalFetchedEvents, len(missedOutEvents), importStatus,
+	)
 
 	return ImportResult{
 		Status:          importStatus,
@@ -286,15 +320,21 @@ func (i *Impl) fanInFetchedPersistedEvents(ctx context.Context, eventsStream ...
 func aggregateImportResults(historical, birth, death, holiday ImportResult) ImportResult {
 	var aggregatedImportStatus ImportStatus
 	switch {
-	case historical.Status == Failed || birth.Status == Failed || death.Status == Failed || holiday.Status == Failed:
+	case historical.Status == Failed ||
+		birth.Status == Failed ||
+		death.Status == Failed ||
+		holiday.Status == Failed:
 		aggregatedImportStatus = Failed
-	case historical.Status == PartialSuccess || birth.Status == PartialSuccess || death.Status == PartialSuccess || holiday.Status == PartialSuccess:
+	case historical.Status == PartialSuccess ||
+		birth.Status == PartialSuccess ||
+		death.Status == PartialSuccess ||
+		holiday.Status == PartialSuccess:
 		aggregatedImportStatus = PartialSuccess
 	default:
 		aggregatedImportStatus = Success
 	}
 	aggregatedMissedOutEvents := make([]events.Event, 0)
-	slices.Concat(aggregatedMissedOutEvents, historical.MissedOutEvents,
+	aggregatedMissedOutEvents = slices.Concat(aggregatedMissedOutEvents, historical.MissedOutEvents,
 		birth.MissedOutEvents,
 		death.MissedOutEvents,
 		holiday.MissedOutEvents,
