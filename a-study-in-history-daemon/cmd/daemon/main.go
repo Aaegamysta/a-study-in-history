@@ -1,9 +1,19 @@
 package main
 
-import "context"
+import (
+	"context"
+	"os"
+	"os/signal"
+	"syscall"
+)
 
 func main() {
-	_ = CreateApp(context.Background())
+	ctx, cancel := context.WithCancel(context.Background())
+	app := CreateApp(context.Background())
+	app.Run(ctx)
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
+	<-signals
+	cancel()
+	app.Shutdown()
 }
-
-
